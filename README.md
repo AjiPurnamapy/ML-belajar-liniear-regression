@@ -66,3 +66,27 @@ DATA .reshape() akan terlihat seperti ini, data X_train harus berbentuk kolom ya
 [11],
 [12],
 ]
+
+    @asynccontextmanager
+    async def lifespan(app: FastAPI):
+    # --- FASE 1: STARTUP (Sebelum Server Terima Tamu) ---
+    logger.info("🔄 System Startup...")
+    try:
+        # Load file .pkl dari hardisk ke RAM
+        ml_models["gaji_model"] = joblib.load("gaji_model.pkl")
+    except FileNotFoundError:
+        # --- LOGIKA SAFETY ---
+        # Kalau file gak ada, buat apa server nyala? Matikan sekarang!
+        logger.error("❌ FATAL ERROR: Model gak ketemu!")
+        sys.exit(1) # Angka 1 artinya "Keluar karena Error". 
+    
+    yield # <--- GARIS BATAS (Server Berjalan Melayani User)
+    
+    # --- FASE 2: SHUTDOWN (Saat Server Dimatikan) ---
+    ml_models.clear() # Bersih-bersih RAM
+@asynccontextmanager: Decorator yang mengubah fungsi biasa menjadi manajer konteks (punya awal dan akhir).
+yield: Ini adalah tombol "Pause". Kode akan berhenti di baris yield selama server menyala
+    # Defensive Programming: Cek apakah model ada di rak?
+    try:
+        years = data.years_experience       # 1. Ambil angka (misal: 3.5)
+        input_data = np.array([[years]])    # 2. BUNGKUS jadi 2D Array [[3.5]]

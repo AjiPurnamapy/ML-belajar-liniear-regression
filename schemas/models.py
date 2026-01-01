@@ -1,9 +1,10 @@
 from pydantic import BaseModel, Field
+from typing import List
 
 class SalaryInput(BaseModel):
-    years_experience: float = Field(gt=0, le=50, description="Pengalaman kerja dalam tahun")
+    years_experience: List[float] = Field(gt=0, le=50, description="Pengalaman kerja dalam tahun")
 
 class SalaryOutput(BaseModel):
     input_years: float
-    estimated_salary_million: float
+    estimated_salary_million: float[dict]
     message: str
