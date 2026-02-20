@@ -5,7 +5,8 @@ import sys
 
 from contextlib import asynccontextmanager
 from fastapi import FastAPI, HTTPException
-from schemas.models import SalaryInput, SalaryOutput
+from app.schemas.models import SalaryInput, SalaryOutput
+from app.utils.converters import convert_ym_to_years
 
 logging.basicConfig(
     level=logging.INFO,
@@ -50,7 +51,10 @@ def predict_salary(data: SalaryInput):
         raise HTTPException(status_code=500, detail="Model machine learning tidak aktif")
     try:
         years_list = data.years_experience
-        input_data = np.array([[years_list]]).reshape(-1, 1)
+
+        converted = [convert_ym_to_years(y) for y in years_list]
+
+        input_data = np.array(years_list).reshape(-1, 1)
         prediction = ml_models["gaji_model"].predict(input_data)
         result_list = [round(float(x), 2) for x in prediction]
 
@@ -58,6 +62,7 @@ def predict_salary(data: SalaryInput):
 
         return {
             "input_years": years_list,
+            "converted_years_decimal": converted,
             "estimated_salary_million":result_list,
             "message": f"Berhasil memprediksi {len(years_list)} data sekaligus!"
         }
