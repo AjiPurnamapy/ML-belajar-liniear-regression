@@ -34,7 +34,7 @@ if __name__ == "__main__":
 
     if hasil:
         print("\n HASIL DARI API ML:")
-        print(f"- User A (2.3 thn): Rp {hasil[0]} Juta")
-        print(f"- User B (3.1 thn): Rp {hasil[1]} Juta")
-        print(f"- User C (20 thn): Rp {hasil[2]} Juta")
+        print(f"- User A {user_a} Tahun: Rp {hasil[0]} Juta")
+        print(f"- User B {user_b} Tahun: Rp {hasil[1]} Juta")
+        print(f"- User C {user_c} Tahun: Rp {hasil[2]} Juta")
         print("\n Data ini siap disimpan ke database postgres!")

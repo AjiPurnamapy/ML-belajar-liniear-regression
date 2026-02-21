@@ -5,8 +5,8 @@ import sys
 
 from contextlib import asynccontextmanager
 from fastapi import FastAPI, HTTPException
-from app.schemas.models import SalaryInput, SalaryOutput
-from app.utils.converters import convert_ym_to_years
+from app.schemas.models import SalaryInput, SalaryOutput, HealthOutput
+from app.services.predictor import predict_salaries
 
 logging.basicConfig(
     level=logging.INFO,
@@ -21,7 +21,7 @@ ml_models = {}
 async def lifespan(app: FastAPI):
     logger.info("🔄 Loading model ML...")
     try:
-        ml_models["gaji_model"] = joblib.load("gaji_model.pkl")
+        ml_models["gaji_model"] = joblib.load("ml/gaji_model.pkl")
         logger.info("✅ Model berhasil di load ke memori!, dan Siap melayani request")
     except FileNotFoundError:
         logger.error("❌: Error: File 'gaji_model.pkl' tidak ditemukan. jalankan train_model.py dulu!")
@@ -36,36 +36,64 @@ async def lifespan(app: FastAPI):
 
 app = FastAPI(
     title="API prediksi gaji",
+    description=(
+        "API untuk memprediksi estimasi gaji berdasarkan pengalaman kerja. "
+        "Menggunakan model Linear Regression yang dilatih dengan data dummy. "
+        "Format input: Y.M (Tahun.Bulan), contoh: 2.6 = 2 tahun 6 bulan."
+    ),
     version="1.0.0",
     lifespan=lifespan
 )
 
-@app.get("/")
+@app.get("/", tags=["INFO"])
 def read_root():
-    return {"message": "Selamat datang di API Prediksi Gaji"}
+    """
+    Endpoint sederhana untuk konfirmasi server hidup.
+    Tidak butuh model ML, tidak butuh auth — hanya salam pembuka.
+    """
+    return {
+        "message": "Selamat datang di API Prediksi Gaji",
+        "version": "1.0.0",
+        "docs": "/docs",
+        "health": "/health",
+    }
 
-@app.post("/predict", response_model=SalaryOutput)
+@app.get("/health")
+def health_check():
+    """
+    Endpoint untuk monitoring - cek apakah server dan model dalam kondisi baik.
+    """
+    model_loaded = "gaji_model" in ml_models and ml_models["gaji_model"] is not None
+    
+    return {
+        "status": "ok" if model_loaded else "degraded",
+        "model_loaded": model_loaded,
+        "version": "1.0.0",
+    }
+
+@app.post("/predict", response_model=SalaryOutput, tags=["Prediksi"])
 def predict_salary(data: SalaryInput):
+    """
+    Endpoint utama: prediksi gaji berdasarkan pengalaman kerja.
+    """
     if "gaji_model"not in ml_models or ml_models["gaji_model"] is None:
         logger.critical("Model hilang dari memori runtime!")
-        raise HTTPException(status_code=500, detail="Model machine learning tidak aktif")
+        raise HTTPException(
+            status_code=500,
+            detail="Model machine learning tidak aktif"
+        )
     try:
-        years_list = data.years_experience
-
-        converted = [convert_ym_to_years(y) for y in years_list]
-
-        input_data = np.array(years_list).reshape(-1, 1)
-        prediction = ml_models["gaji_model"].predict(input_data)
-        result_list = [round(float(x), 2) for x in prediction]
-
-        logger.info(f"Batch Prediksi: {len(years_list)} data diproses")
-
-        return {
-            "input_years": years_list,
-            "converted_years_decimal": converted,
-            "estimated_salary_million":result_list,
-            "message": f"Berhasil memprediksi {len(years_list)} data sekaligus!"
-        }
+        result = predict_salaries(
+            model=ml_models["gaji_model"],
+            years_list=data.years_experience
+        )
+        return result
+    except ValueError as e:
+        logger.warning(f"Input tidak valid: {e}")
+        raise HTTPException(status_code=422, detail=str(e))
     except Exception as e:
-        logger.error(f"Error saat prediksi: {e}")
-        raise HTTPException(status_code=500, detail="Terjadi kesalahan internal saat memproses data")
+        logger.error(f"Error saat prediksi: {e}", exc_info=True)
+        raise HTTPException(
+            status_code=500,
+            detail="Terjadi kesalahan internal saat memproses data"
+        )
