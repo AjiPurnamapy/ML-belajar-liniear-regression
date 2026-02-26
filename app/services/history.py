@@ -4,14 +4,18 @@ from app.db.models import PredictionHistory
 
 async def save_prediction(session: AsyncSession, prediction_result: dict, model_version: str) -> PredictionHistory:
     """
-    Simpan Hasil Prediksi ke Database
+    Simpan Hasil Prediksi ke Database.
+    Menggunakan .get() untuk field opsional agar kompatibel
+    dengan berbagai versi output predictor.
     """
     record = PredictionHistory(
-        input_years = prediction_result["input_years"],
-        converted_years = prediction_result["converted_years_decimal"],
-        predicted_salaries = prediction_result["estimated_salary_million"],
-        data_count = len(prediction_result["input_years"]),
-        model_version = model_version,
+        input_years=prediction_result["input_years"],
+        converted_years=prediction_result["converted_years_decimal"],
+        city=prediction_result.get("city"),
+        job_level=prediction_result.get("job_level"),
+        predicted_salaries=prediction_result["estimated_salary_million"],
+        data_count=len(prediction_result["input_years"]),
+        model_version=model_version,
     )
     session.add(record)
     await session.commit()
@@ -26,7 +30,7 @@ async def get_all_history(session: AsyncSession, limit: int = 20) -> list[Predic
     )
     return result.scalars().all()
 
-async def get_history_by_id(session: AsyncSession, history_id: int, ) -> PredictionHistory | None :
+async def get_history_by_id(session: AsyncSession, history_id: int) -> PredictionHistory | None:
     result = await session.execute(
         select(PredictionHistory).where(PredictionHistory.id == history_id)
     )

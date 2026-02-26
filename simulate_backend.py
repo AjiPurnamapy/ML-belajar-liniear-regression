@@ -1,5 +1,10 @@
 import httpx
 import json
+import sys
+
+# Windows CMD Unicode patch
+if sys.platform == "win32":
+    sys.stdout.reconfigure(encoding='utf-8')
 
 BASE_URL = "http://127.0.0.1:8000"
 PREDICT_URL = f"{BASE_URL}/predict"
@@ -26,9 +31,11 @@ def cek_health_server() -> bool:
         print("   Pastikan sudah menjalankan: uvicorn app.main:app --reload")
         return False
 
-def hitung_prediksi_gaji(list_pengalaman: list[float]) -> list[float] | None:
+def hitung_prediksi_gaji(list_pengalaman: list[float], kota_list: list[str], level_list: list[str]) -> list[float] | None:
     payload ={
-        "years_experience": list_pengalaman
+        "years_experience": list_pengalaman,
+        "city": kota_list,
+        "job_level": level_list,
     }
     print(f"\n📤 Mengirim request ke {PREDICT_URL}")
     print(f"   Payload: {json.dumps(payload)}")
@@ -46,11 +53,11 @@ def hitung_prediksi_gaji(list_pengalaman: list[float]) -> list[float] | None:
             print(f"   {'Input (Y.M)':<15} {'Konversi (thn)':<18} {'Prediksi Gaji'}")
             print(f"   {'-'*50}")
 
-            for _, (input_ym, converted, salary) in enumerate(zip(
+            for input_ym, converted, salary in zip(
                 data["input_years"],
                 data["converted_years_decimal"],
-                data["estimated_salary_million"]
-            )):
+                data["estimated_salary_million"],
+            ):
                 print(f"   {input_ym:<15} {converted:<18} Rp {salary:.2f} juta")
             return data["estimated_salary_million"]
         
@@ -125,24 +132,30 @@ if __name__ == "__main__":
     print("=" * 55)
 
     kandidat = {
-        "Budi (fresh graduate)": 0.6,       # 0 tahun 6 bulan
-        "Sari (junior)": 2.5,               # 2 tahun 3 bulan
-        "Andi (mid-level)": 4.0,            # 4 tahun tepat
-        "Dewi (senior)": 7.6,               # 7 tahun 6 bulan
-        "Pak Budi (principal)": 12.0,       # 12 tahun
+        "Budi": 0.6,       # 0 tahun 6 bulan
+        "Sari": 2.5,       # 2 tahun 5 bulan
+        "Andi": 4.0,       # 4 tahun tepat
+        "Dewi": 7.6,       # 7 tahun 6 bulan
+        "Pak Budi": 12.0,  # 12 tahun
     }
 
     nama_list = list(kandidat.keys())
     pengalaman_list = list(kandidat.values())
+    kota_list = ["jakarta", "bandung", "surabaya", "medan", "yogyakarta", "binjai"]
+    level_list = ["junior", "mid", "senior", "lead", "principal", "fresh graduate"]
+    
+    # Ambil elemen kota dan jabatan secukupnya sesuai jumlah orang/pengalaman
+    kota_list = kota_list[:len(kandidat)]
+    level_list = level_list[:len(kandidat)]
 
-    hasil = hitung_prediksi_gaji(pengalaman_list)
+    hasil = hitung_prediksi_gaji(pengalaman_list, kota_list, level_list)
 
     if hasil:
         print("\n💼 Ringkasan untuk HR:")
-        print(f"   {'Nama':<30} {'Pengalaman':<15} {'Est. Gaji'}")
-        print(f"   {'-'*55}")
-        for nama, pengalaman, gaji in zip(nama_list, pengalaman_list, hasil):
-            print(f"   {nama:<30} {pengalaman} thn         Rp {gaji:.1f} juta")
+        print(f"   {'Nama':<15} {'Kota':<14} {'Level':<12} {'Pengalaman':<12} {'Est. Gaji'}")
+        print(f"   {'-'*65}")
+        for nama, kota, level, pengalaman, gaji in zip(nama_list, kota_list, level_list, pengalaman_list, hasil):
+            print(f"   {nama:<15} {kota:<14} {level:<12} {pengalaman:<12} Rp {gaji:.1f} juta")
 
         print("\n✅ Data siap untuk disimpan ke database PostgreSQL!")
 

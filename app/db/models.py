@@ -1,6 +1,6 @@
 from datetime import datetime
 from typing import List
-from sqlalchemy import Integer, Float, DateTime, ARRAY, Index
+from sqlalchemy import Integer, Float, DateTime, ARRAY, String, Index
 from sqlalchemy.sql import func
 from sqlalchemy.orm import Mapped, mapped_column
 from app.db.database import Base
@@ -18,6 +18,8 @@ class PredictionHistory(Base):
     # Contoh: {2.6, 3.0, 5.0} tersimpan sebagai satu kolom
     input_years : Mapped[List[float]] = mapped_column(ARRAY(Float), nullable=False)
     converted_years : Mapped[List[float]] = mapped_column(ARRAY(Float), nullable=False)
+    city : Mapped[List[str]] = mapped_column(ARRAY(String), nullable=True)
+    job_level : Mapped[List[str]] = mapped_column(ARRAY(String), nullable=True)
     predicted_salaries : Mapped[List[float]] = mapped_column(ARRAY(Float), nullable=False)
 
     # Jumlah data dalam satu request — berguna untuk filtering
