@@ -1,5 +1,7 @@
+import math
+
 from sqlalchemy.ext.asyncio import AsyncSession
-from sqlalchemy import select, desc
+from sqlalchemy import select, desc, func
 from app.db.models import PredictionHistory
 
 async def save_prediction(session: AsyncSession, prediction_result: dict, model_version: str) -> PredictionHistory:
@@ -23,12 +25,47 @@ async def save_prediction(session: AsyncSession, prediction_result: dict, model_
 
     return record
 
-async def get_all_history(session: AsyncSession, limit: int = 20) -> list[PredictionHistory]:
-    result = await session.execute(
+async def get_all_history(
+    session: AsyncSession,
+    page: int = 1,
+    size: int = 10,
+) -> dict:
+    """
+    Ambil riwayat prediksi dengan paginasi.
+
+    Args:
+        session : Sesi database async
+        page    : Nomor halaman (mulai dari 1)
+        size    : Jumlah item per halaman
+
+    Returns:
+        dict berisi metadata paginasi dan list items
+    """
+    # Hitung total data
+    count_query = select(func.count(PredictionHistory.id))
+    total_result = await session.execute(count_query)
+    total_data = total_result.scalar_one()
+
+    total_pages = max(1, math.ceil(total_data / size))
+
+    # Ambil data sesuai halaman
+    offset = (page - 1) * size
+    data_query = (
         select(PredictionHistory)
-        .order_by(desc(PredictionHistory.created_at)).limit(limit)
+        .order_by(desc(PredictionHistory.created_at))
+        .offset(offset)
+        .limit(size)
     )
-    return result.scalars().all()
+    result = await session.execute(data_query)
+    items = result.scalars().all()
+
+    return {
+        "total_data": total_data,
+        "total_pages": total_pages,
+        "current_page": page,
+        "page_size": size,
+        "items": items,
+    }
 
 async def get_history_by_id(session: AsyncSession, history_id: int) -> PredictionHistory | None:
     result = await session.execute(

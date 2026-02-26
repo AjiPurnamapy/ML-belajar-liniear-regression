@@ -1,5 +1,5 @@
 from pydantic import BaseModel, Field, field_validator, model_validator
-from typing import List
+from typing import List, Optional
 from datetime import datetime as dt
 from app.utils.constants import VALID_CITIES, VALID_JOB_LEVELS
 
@@ -142,3 +142,34 @@ class HistoryOutput(BaseModel):
     data_count: int
     model_version: str
     created_at: dt
+
+
+class PaginatedHistoryOutput(BaseModel):
+    """Schema response paginasi untuk endpoint /history."""
+    total_data: int
+    total_pages: int
+    current_page: int
+    page_size: int
+    items: List[HistoryOutput]
+
+
+# --- Auth Schemas ---
+
+class UserCreate(BaseModel):
+    """Schema untuk registrasi user baru."""
+    username: str = Field(..., min_length=3, max_length=50, examples=["admin_hr"])
+    password: str = Field(..., min_length=6, max_length=100, examples=["rahasia123"])
+
+class UserResponse(BaseModel):
+    """Schema response setelah registrasi berhasil."""
+    model_config = {"from_attributes": True}
+
+    id: int
+    username: str
+    role: str
+    created_at: dt
+
+class Token(BaseModel):
+    """Schema response setelah login berhasil."""
+    access_token: str
+    token_type: str = "bearer"

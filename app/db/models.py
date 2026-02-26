@@ -43,3 +43,25 @@ class PredictionHistory(Base):
             f"count={self.data_count} "
             f"at={self.created_at}> "
         )
+
+
+class User(Base):
+    """
+    Tabel user untuk autentikasi JWT.
+    Setiap user memiliki role (admin / user) untuk otorisasi endpoint.
+    """
+
+    __tablename__ = "users"
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    username: Mapped[str] = mapped_column(String(50), unique=True, nullable=False, index=True)
+    hashed_password: Mapped[str] = mapped_column(String(255), nullable=False)
+    role: Mapped[str] = mapped_column(String(20), nullable=False, default="user")
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True),
+        server_default=func.now(),
+        nullable=False
+    )
+
+    def __repr__(self) -> str:
+        return f"<User id={self.id} username={self.username} role={self.role}>"

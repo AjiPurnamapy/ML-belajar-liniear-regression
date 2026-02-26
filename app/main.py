@@ -3,14 +3,27 @@ import logging
 import sys
 
 from contextlib import asynccontextmanager
-from fastapi import FastAPI, HTTPException, Depends
+from fastapi import FastAPI, HTTPException, Depends, Request
+from fastapi.security import OAuth2PasswordRequestForm
+from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 from starlette.concurrency import run_in_threadpool
+from slowapi import Limiter
+from slowapi.util import get_remote_address
+from slowapi.errors import RateLimitExceeded
+from slowapi.middleware import SlowAPIMiddleware
 
-from app.schemas.models import SalaryInputV2, SalaryOutputV2, HealthOutput, HistoryOutput
+from app.schemas.models import (
+    SalaryInputV2, SalaryOutputV2, HealthOutput, HistoryOutput,
+    PaginatedHistoryOutput, UserCreate, UserResponse, Token,
+)
 from app.services.predictor import predict_salaries_v2
 from app.services.history import save_prediction, get_all_history, get_history_by_id
+from app.services.auth import (
+    hash_password, verify_password, create_access_token, get_current_user,
+)
 from app.db.database import get_db, engine, Base
+from app.db.models import User
 
 
 logging.basicConfig(
@@ -21,8 +34,11 @@ logging.basicConfig(
 logger = logging.getLogger(__name__)
 
 ml_models = {}
-APP_VERSION = "2.0.0"
+APP_VERSION = "3.0.0"
 MODEL_VERSION = "salary-linear-v2"
+
+# --- Rate Limiter ---
+limiter = Limiter(key_func=get_remote_address)
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
@@ -55,11 +71,20 @@ app = FastAPI(
     description=(
         "API untuk memprediksi estimasi gaji berdasarkan pengalaman kerja, kota, dan level jabatan. "
         "Menggunakan model pipeline (OneHotEncoder + LinearRegression) yang dilatih dengan data sintetik. "
-        "Format input pengalaman: Y.M (Tahun.Bulan), contoh: 2.6 = 2 tahun 6 bulan."
+        "Format input pengalaman: Y.M (Tahun.Bulan), contoh: 2.6 = 2 tahun 6 bulan. "
+        "Semua endpoint prediksi dan history memerlukan JWT token."
     ),
     version=APP_VERSION,
-    lifespan=lifespan
+    lifespan=lifespan,
 )
+
+# Pasang Rate Limiter sebagai middleware
+app.state.limiter = limiter
+app.add_middleware(SlowAPIMiddleware)
+
+# =====================================
+#   INFO ENDPOINTS (Publik)
+# =====================================
 
 @app.get("/", tags=["Info"])
 def read_root():
@@ -71,7 +96,7 @@ def read_root():
         "message": "Selamat datang di API Prediksi Gaji V2",
         "version": APP_VERSION,
         "docs": "/docs",
-        "health": "/health"
+        "health": "/health",
     }
 
 @app.get("/health", response_model=HealthOutput, tags=["Info"])
@@ -87,11 +112,78 @@ def health_check():
         "version": APP_VERSION,
     }
 
+# =====================================
+#   AUTH ENDPOINTS (Publik)
+# =====================================
+
+@app.post("/register", response_model=UserResponse, status_code=201, tags=["Auth"])
+async def register_user(data: UserCreate, db: AsyncSession = Depends(get_db)):
+    """
+    Registrasi user baru.
+    Username harus unik, password minimal 6 karakter.
+    """
+    # Cek apakah username sudah terpakai
+    existing = await db.execute(select(User).where(User.username == data.username))
+    if existing.scalar_one_or_none() is not None:
+        raise HTTPException(
+            status_code=409,
+            detail=f"Username '{data.username}' sudah terdaftar"
+        )
+
+    user = User(
+        username=data.username,
+        hashed_password=hash_password(data.password),
+        role="user",
+    )
+    db.add(user)
+    await db.commit()
+    await db.refresh(user)
+
+    logger.info(f"✅ User baru terdaftar: {user.username}")
+    return user
+
+@app.post("/token", response_model=Token, tags=["Auth"])
+async def login(
+    form_data: OAuth2PasswordRequestForm = Depends(),
+    db: AsyncSession = Depends(get_db),
+):
+    """
+    Login dan dapatkan JWT token.
+    Gunakan form-data dengan field `username` dan `password`.
+    Token berlaku selama 60 menit.
+    """
+    result = await db.execute(select(User).where(User.username == form_data.username))
+    user = result.scalar_one_or_none()
+
+    if user is None or not verify_password(form_data.password, user.hashed_password):
+        raise HTTPException(
+            status_code=401,
+            detail="Username atau password salah",
+            headers={"WWW-Authenticate": "Bearer"},
+        )
+
+    access_token = create_access_token(data={"sub": user.username})
+    logger.info(f"🔑 User '{user.username}' berhasil login")
+    return {"access_token": access_token, "token_type": "bearer"}
+
+# =====================================
+#   PREDIKSI ENDPOINT (Dilindungi JWT + Rate Limit)
+# =====================================
+
 @app.post("/predict", response_model=SalaryOutputV2, tags=["Prediksi"])
-async def predict_salary(data: SalaryInputV2, db: AsyncSession = Depends(get_db)):
+@limiter.limit("20/minute")
+async def predict_salary(
+    request: Request,
+    data: SalaryInputV2,
+    db: AsyncSession = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
     """
     Endpoint utama: prediksi gaji berdasarkan pengalaman kerja, kota, dan level jabatan.
     Mendukung batch processing (banyak orang sekaligus).
+
+    **Memerlukan JWT token** (header: `Authorization: Bearer <token>`).
+    **Rate limit**: 20 request per menit per IP.
     """
     
     if "gaji_model_v2" not in ml_models or ml_models["gaji_model_v2"] is None:
@@ -130,13 +222,42 @@ async def predict_salary(data: SalaryInputV2, db: AsyncSession = Depends(get_db)
             detail="Terjadi kesalahan internal saat memproses data"
         )
 
-@app.get("/history", response_model=list[HistoryOutput], tags=["History"])
-async def get_history(limit: int = 20, db: AsyncSession = Depends(get_db)):
-    record = await get_all_history(db, limit=limit)
-    return record
+# =====================================
+#   HISTORY ENDPOINTS (Dilindungi JWT)
+# =====================================
+
+@app.get("/history", response_model=PaginatedHistoryOutput, tags=["History"])
+async def get_history(
+    page: int = 1,
+    size: int = 10,
+    db: AsyncSession = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    """
+    Ambil riwayat prediksi dengan paginasi.
+    **Memerlukan JWT token**.
+
+    - **page**: Nomor halaman (mulai dari 1)
+    - **size**: Jumlah item per halaman (default 10, maks 100)
+    """
+    if page < 1:
+        raise HTTPException(status_code=422, detail="Parameter 'page' harus >= 1")
+    if size < 1 or size > 100:
+        raise HTTPException(status_code=422, detail="Parameter 'size' harus antara 1-100")
+
+    result = await get_all_history(db, page=page, size=size)
+    return result
 
 @app.get("/history/{history_id}", response_model=HistoryOutput, tags=["History"])
-async def get_history_detail(history_id: int, db: AsyncSession = Depends(get_db)):
+async def get_history_detail(
+    history_id: int,
+    db: AsyncSession = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    """
+    Ambil detail satu riwayat prediksi berdasarkan ID.
+    **Memerlukan JWT token**.
+    """
     record = await get_history_by_id(db, history_id)
 
     if record is None:
